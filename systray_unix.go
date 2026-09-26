@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/png" // used only here
 	"log"
 	"os"
@@ -640,17 +641,26 @@ func convertToPixels(data []byte) PX {
 	}
 }
 
+// argbForImage flattens img into the SNI IconPixmap layout: four bytes per
+// pixel in A, R, G, B order (matching Cogl's ARGB_8888 memory order) with
+// straight, non-premultiplied alpha.
+//
+// Going through color.NRGBAModel is deliberate. Calling RGBA() and taking a
+// byte only works for fully opaque pixels: for antialiased pixels that value
+// is premultiplied, so byte(r) yields the low byte of a scaled 16-bit value
+// (garbage colors along every edge). NRGBAModel gives the exact 8-bit straight
+// components.
 func argbForImage(img image.Image) []byte {
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
 	data := make([]byte, w*h*4)
 	i := 0
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			r, g, b, a := img.At(x, y).RGBA()
-			data[i] = byte(a)
-			data[i+1] = byte(r)
-			data[i+2] = byte(g)
-			data[i+3] = byte(b)
+			c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+			data[i] = c.A
+			data[i+1] = c.R
+			data[i+2] = c.G
+			data[i+3] = c.B
 			i += 4
 		}
 	}
