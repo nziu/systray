@@ -82,14 +82,26 @@ func SetIconThemePath(themePath string) {
 	props.SetMust("org.kde.StatusNotifierItem", "IconThemePath", iconThemePath)
 }
 
-// iconPixmapValue returns the IconPixmap property value.
-// If iconData is empty, it returns an empty array to allow fallback to IconName;
-// otherwise, it returns the converted pixel data.
-func iconPixmapValue(iconData []byte) []PX {
-	if len(iconData) == 0 {
+// pixmapsFromBytes converts each image to an SNI icon pixmap.
+func pixmapsFromBytes(list [][]byte) []PX {
+	out := make([]PX, 0, len(list))
+	for _, b := range list {
+		out = append(out, convertToPixels(b))
+	}
+	return out
+}
+
+// iconPixmaps returns the IconPixmap property value, preferring the explicit
+// multi-size list from SetIconPixmaps over the single image from SetIcon.
+// With neither set it returns an empty array, allowing a fallback to IconName.
+func iconPixmaps(data []byte, list [][]byte) []PX {
+	if len(list) > 0 {
+		return pixmapsFromBytes(list)
+	}
+	if len(data) == 0 {
 		return []PX{}
 	}
-	return []PX{convertToPixels(iconData)}
+	return []PX{convertToPixels(data)}
 }
 
 // republishIcon pushes the recorded icon state to the D-Bus properties. It is
@@ -99,7 +111,7 @@ func iconPixmapValue(iconData []byte) []PX {
 func (t *tray) republishIcon() {
 	t.lock.Lock()
 	props, conn := t.props, t.conn
-	data := t.iconData
+	data, list := t.iconData, t.iconPixmapList
 	name, themePath := iconName, iconThemePath
 	t.lock.Unlock()
 
@@ -107,7 +119,7 @@ func (t *tray) republishIcon() {
 		return
 	}
 
-	props.SetMust("org.kde.StatusNotifierItem", "IconPixmap", iconPixmapValue(data))
+	props.SetMust("org.kde.StatusNotifierItem", "IconPixmap", iconPixmaps(data, list))
 	if name != "" {
 		props.SetMust("org.kde.StatusNotifierItem", "IconName", name)
 	}
@@ -192,6 +204,36 @@ func SetIcon(iconBytes []byte) {
 	if err != nil {
 		log.Printf("systray error: failed to emit new icon signal: %s\n", err)
 		return
+	}
+}
+
+// SetIconPixmaps publishes several pre-rendered images as the SNI IconPixmap
+// array, in ascending size order. Hosts pick the smallest entry that is at
+// least the requested physical size, so supplying the common panel sizes makes
+// the icon render at an exact size instead of being rescaled (which looks
+// blurry). It takes precedence over SetIcon.
+func SetIconPixmaps(list [][]byte) {
+	instance.lock.Lock()
+	instance.iconPixmapList = list
+	props := instance.props
+	conn := instance.conn
+	defer instance.lock.Unlock()
+
+	if props == nil {
+		return
+	}
+
+	props.SetMust("org.kde.StatusNotifierItem", "IconPixmap", pixmapsFromBytes(list))
+	if conn == nil {
+		return
+	}
+
+	err := notifier.Emit(conn, &notifier.StatusNotifierItem_NewIconSignal{
+		Path: path,
+		Body: &notifier.StatusNotifierItem_NewIconSignalBody{},
+	})
+	if err != nil {
+		log.Printf("systray error: failed to emit new icon signal: %s\n", err)
 	}
 }
 
@@ -445,6 +487,9 @@ type tray struct {
 
 	// icon data for the main systray icon
 	iconData []byte
+	// iconPixmapList holds pre-rendered images published by SetIconPixmaps.
+	// When non-empty it takes precedence over iconData.
+	iconPixmapList [][]byte
 	// title and tooltip state
 	title, tooltipTitle string
 
@@ -495,7 +540,7 @@ func (t *tray) createPropSpec() map[string]map[string]*prop.Prop {
 				Callback: nil,
 			},
 			"IconPixmap": {
-				Value:    iconPixmapValue(t.iconData),
+				Value:    iconPixmaps(t.iconData, t.iconPixmapList),
 				Writable: true,
 				Emit:     prop.EmitTrue,
 				Callback: nil,

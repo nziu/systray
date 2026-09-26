@@ -13,7 +13,16 @@ resolved file — typically an SVG — at the panel's real size, so it stays sha
 on any scale factor. When `IconPixmap` is left empty (`iconPixmapValue` returns
 an empty array) the host relies solely on the name.
 
-## 2. No `Activate` in introspection without a handler
+## 2. Multi-size `IconPixmap` (`SetIconPixmaps`)
+
+`SetIconPixmaps([][]byte)` publishes several pre-rendered images as the SNI
+`IconPixmap` array at once. Hosts pick the smallest entry that is at least the
+requested physical size (GNOME's AppIndicator extension does this in
+`pixmapsUtils.getBestPixmap`), so supplying the common panel sizes lets them
+render at an exact size instead of rescaling a single large pixmap — which is
+what looks blurry. It takes precedence over `SetIcon`.
+
+## 3. No `Activate` in introspection without a handler
 
 GNOME's AppIndicator extension computes
 `supportsActivation = !!interfaceInfo.lookup_method('Activate')`. When true, a
@@ -24,7 +33,7 @@ introspection data unless `SetOnTapped`/`SetOnSecondaryTapped` registered a
 handler. The methods stay callable (they already return `UnknownMethod` when
 unset), so a menu-only tray gets an instant left-click menu.
 
-## 3. Republish the icon once the properties exist
+## 4. Republish the icon once the properties exist
 
 `SetIcon`/`SetIconName` record their value before the D-Bus properties are
 exported, so an icon set from `onReady` can fall into the window between
