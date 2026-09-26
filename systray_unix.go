@@ -92,6 +92,70 @@ func iconPixmapValue(iconData []byte) []PX {
 	return []PX{convertToPixels(iconData)}
 }
 
+// republishIcon pushes the recorded icon state to the D-Bus properties. It is
+// safe to call before the properties are exported. SetIcon/SetIconName record
+// their value before the properties exist, so re-publishing here keeps an icon
+// set from onReady from being lost to the export race.
+func (t *tray) republishIcon() {
+	t.lock.Lock()
+	props, conn := t.props, t.conn
+	data := t.iconData
+	name, themePath := iconName, iconThemePath
+	t.lock.Unlock()
+
+	if props == nil {
+		return
+	}
+
+	props.SetMust("org.kde.StatusNotifierItem", "IconPixmap", iconPixmapValue(data))
+	if name != "" {
+		props.SetMust("org.kde.StatusNotifierItem", "IconName", name)
+	}
+	if themePath != "" {
+		props.SetMust("org.kde.StatusNotifierItem", "IconThemePath", themePath)
+	}
+
+	if conn == nil {
+		return
+	}
+	if err := notifier.Emit(conn, &notifier.StatusNotifierItem_NewIconSignal{
+		Path: path,
+		Body: &notifier.StatusNotifierItem_NewIconSignalBody{},
+	}); err != nil {
+		log.Printf("systray error: failed to emit new icon signal: %s\n", err)
+	}
+}
+
+// sniIntrospection returns the StatusNotifierItem interface with methods whose
+// handler is not registered removed. GNOME's AppIndicator extension decides
+// whether a single primary click is deferred by the double-click timeout by
+// looking up "Activate" in this introspection data; a menu-only tray must not
+// advertise it, otherwise every left click waits ~400ms before the menu opens.
+// The same applies to "SecondaryActivate" and SetOnSecondaryTapped.
+func sniIntrospection() introspect.Interface {
+	iface := notifier.IntrospectDataStatusNotifierItem
+	if tappedLeft == nil {
+		iface.Methods = withoutMethod(iface.Methods, "Activate")
+	}
+	if tappedRight == nil {
+		iface.Methods = withoutMethod(iface.Methods, "SecondaryActivate")
+	}
+	return iface
+}
+
+// withoutMethod returns a copy of methods without the named method. The
+// receiver is resliced with zero capacity so the backing array of the shared
+// generated data is never mutated.
+func withoutMethod(methods []introspect.Method, name string) []introspect.Method {
+	out := methods[:0:0]
+	for _, m := range methods {
+		if m.Name != name {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // SetTemplateIcon sets the systray icon as a template icon (on macOS), falling back
 // to a regular icon on other platforms.
 // templateIconBytes and iconBytes should be the content of .ico for windows and
@@ -284,7 +348,7 @@ func nativeStart() {
 		Interfaces: []introspect.Interface{
 			introspect.IntrospectData,
 			prop.IntrospectData,
-			notifier.IntrospectDataStatusNotifierItem,
+			sniIntrospection(),
 		},
 	}
 	err = conn.Export(introspect.NewIntrospectable(&node), path,
@@ -313,6 +377,12 @@ func nativeStart() {
 	instance.props = props
 	instance.menuProps = menuProps
 	instance.lock.Unlock()
+
+	// SetIconName/SetIconThemePath record their values before the D-Bus
+	// properties exist, so one set from onReady can land in the window between
+	// createPropSpec() capturing the old value and instance.props being
+	// assigned. Re-publish the recorded state now so it is never lost.
+	instance.republishIcon()
 
 	go stayRegistered()
 }
