@@ -1,17 +1,17 @@
 # sbtray patches
 
 This is the [sbtray](https://github.com/nziu/sbtray) fork of `fyne.io/systray`.
-It tracks upstream `master` and carries three Linux StatusNotifierItem (SNI)
-changes on top. Only `systray_unix.go` is modified; the Windows and macOS
-backends are untouched.
+It carries four Linux StatusNotifierItem (SNI) changes on top of a pinned
+upstream base (see Upstream). Only `systray_unix.go` is modified; the Windows
+and macOS backends are untouched.
 
 ## 1. Icon by theme name (`SetIconName`, `SetIconThemePath`)
 
 Publishes the SNI `IconName`/`IconThemePath` properties (both writable) and
 emits `NewIcon`. Hosts that support themed icons (GNOME, KDE) render the
 resolved file — typically an SVG — at the panel's real size, so it stays sharp
-on any scale factor. When `IconPixmap` is left empty (`iconPixmapValue` returns
-an empty array) the host relies solely on the name.
+on any scale factor. When `IconPixmap` is left empty (`iconPixmaps` returns an
+empty array) the host relies solely on the name.
 
 ## 2. Multi-size `IconPixmap` (`SetIconPixmaps`)
 
@@ -43,5 +43,12 @@ so the icon is never lost.
 
 ## Upstream
 
-- Base: `fyne.io/systray` upstream `master`
+- Base: `fyne.io/systray` @ `f60f01b` (2026-08-14, after the v1.12.2 release)
+- Patch commits:
+  - `528cad2` `SetIconName` / `SetIconThemePath` (section 1)
+  - `5738b4c` hide `Activate` without a handler; `republishIcon` (sections 3-4)
+  - `673211f` `SetIconPixmaps` (section 2)
+  - `44d8710` fix ARGB channel order in `argbForImage`
+- Versioning: this fork uses its own `v0.x.y` tags, decoupled from the upstream
+  version. `v0.1.0` is the first tag.
 - License: see `LICENSE`
